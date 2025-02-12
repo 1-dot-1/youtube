@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>YouTube MP4 Converter (Client-side Experimental)</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      line-height: 1.6;
+    }
+    input, button {
+      font-size: 1em;
+      padding: 8px;
+    }
+    #progress {
+      margin-top: 20px;
+      white-space: pre-line;
+      color: #333;
+    }
+    a.download-link {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 8px 12px;
+      background-color: #28a745;
+      color: #fff;
+      text-decoration: none;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>YouTube MP4 Converter (Client-side Experimental)</h1>
+  <p>
+    ※ 경고: 이 코드는 YouTube의 서비스 약관 및 저작권 정책을 위반할 수 있으므로, 학습 및 실험 목적으로만 사용하십시오.
+  </p>
+  <form id="convertForm">
+    <label for="videoUrl">YouTube 영상 URL:</label><br>
+    <input type="text" id="videoUrl" name="videoUrl" placeholder="https://www.youtube.com/watch?v=..." required>
+    <button type="submit">변환 후 다운로드</button>
+  </form>
+  <div id="progress"></div>
+
+  <!-- ffmpeg.wasm (출처: https://github.com/ffmpegwasm/ffmpeg.wasm) -->
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.8/dist/ffmpeg.min.js"></script>
+  <script>
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    const ffmpeg = createFFmpeg({ log: true });
+    const form = document.getElementById('convertForm');
+    const progressDiv = document.getElementById('progress');
+    // 공개 CORS 프록시 (출처: https://thingproxy.freeboard.io/fetch/)
+    const corsProxy = "https://thingproxy.freeboard.io/fetch/";
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      progressDiv.textContent = "프로세스 시작...\n";
+      
+      const videoUrl = document.getElementById('videoUrl').value.trim();
+      if (!videoUrl) {
+        progressDiv.textContent += "유효한 URL을 입력하세요.";
+        return;
+      }
+      
+      // ① YouTube URL에서 영상 ID 추출 (예: v=VIDEO_ID)
+      const videoIdMatch = videoUrl.match(/[?&]v=([^&]+)/);
+      if (!videoIdMatch) {
+        progressDiv.textContent += "유효한 YouTube URL이 아닙니다.";
+        return;
+      }
+      const videoId = videoIdMatch[1];
+      progressDiv.textContent += "비디오 ID 추출됨: " + videoId + "\n";
+      
+      // ② yt-download.org의 API(버튼 페이지)를 이용해 다운로드 링크 파싱 (실험적)
+      const apiUrl = "https://www.yt-download.org/api/button/mp4/" + videoId;
+      progressDiv.textContent += "다운로드 페이지 요청 중...\n";
+      
+      try {
+        // CORS 프록시를 통해 HTML 페이지 가져오기
+        const apiResponse = await fetch(corsProxy + apiUrl);
+        const htmlText = await apiResponse.text();
+        // HTML 파서를 이용해 다운로드 링크 추출
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(htmlText, 'text/html');
+        // 다운로드 버튼의 링크를 선택 (링크에 "download" 문자열이 포함된 경우)
+        const linkElement = doc.querySelector('a[href*="download"]');
+        if (!linkElement) {
+          progressDiv.textContent += "다운로드 링크를 찾을 수 없습니다.\n";
+          return;
+        }
+        const downloadLink = linkElement.href;
+        progressDiv.textContent += "다운로드 링크 발견:\n" + downloadLink + "\n";
+        
+        // ③ CORS 프록시를 통해 영상 파일(바이너리) 다운로드
+        progressDiv.textContent += "비디오 파일 다운로드 중...\n";
+        const videoResponse = await fetch(corsProxy + downloadLink);
+        if (!videoResponse.ok) {
+          progressDiv.textContent += "비디오 파일 다운로드 실패: " + videoResponse.statusText + "\n";
+          return;
+        }
+        const videoData = await videoResponse.arrayBuffer();
+        progressDiv.textContent += "비디오 파일 다운로드 완료 (크기: " + videoData.byteLength + " 바이트)\n";
+        
+        // ④ ffmpeg.wasm을 이용한 mp4 컨테이너 변환 (스트림 복사; 이미 mp4인 경우에도 진행)
+        if (!ffmpeg.isLoaded()) {
+          progressDiv.textContent += "ffmpeg 로딩 중...\n";
+          await ffmpeg.load();
+        }
+        progressDiv.textContent += "ffmpeg 파일 시스템에 파일 쓰는 중...\n";
+        ffmpeg.FS('writeFile', 'input.mp4', new Uint8Array(videoData));
+        
+        progressDiv.textContent += "mp4 변환 시작 (스트림 복사)...\n";
+        await ffmpeg.run('-i', 'input.mp4', '-c', 'copy', 'output.mp4');
+        progressDiv.textContent += "mp4 변환 완료.\n";
+        
+        // ⑤ 변환된 파일 읽고 Blob 생성 후 다운로드 링크 생성
+        const data = ffmpeg.FS('readFile', 'output.mp4');
+        const videoBlob = new Blob([data.buffer], { type: 'video/mp4' });
+        const url = URL.createObjectURL(videoBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = videoId + '.mp4';
+        a.className = "download-link";
+        a.textContent = "여기를 클릭하여 다운로드 (" + videoId + ".mp4)";
+        progressDiv.appendChild(a);
+        
+      } catch (err) {
+        progressDiv.textContent += "오류 발생: " + err.message + "\n";
+      }
+    });
+  </script>
+</body>
+</html>
