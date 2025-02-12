@@ -43,7 +43,9 @@
 
   <!-- ES Module 방식으로 FFmpeg WASM 로드 (버전 0.12.15) -->
   <script type="module">
-    import { createFFmpeg, fetchFile } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js';
+    // 네임스페이스 임포트를 사용하여 createFFmpeg와 fetchFile에 접근합니다.
+    import * as FFmpegModule from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js';
+    const { createFFmpeg, fetchFile } = FFmpegModule;
 
     const ffmpeg = createFFmpeg({ log: true });
     const form = document.getElementById('convertForm');
@@ -81,7 +83,7 @@
         // HTML 파서를 이용해 다운로드 링크 추출
         const parser = new DOMParser();
         const doc = parser.parseFromString(htmlText, 'text/html');
-        // 다운로드 버튼의 링크를 선택 (링크에 "download" 문자열 포함)
+        // 다운로드 버튼의 링크 선택 (링크에 "download" 문자열 포함)
         const linkElement = doc.querySelector('a[href*="download"]');
         if (!linkElement) {
           progressDiv.textContent += "다운로드 링크를 찾을 수 없습니다.\n";
