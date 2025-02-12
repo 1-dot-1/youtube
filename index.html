@@ -43,11 +43,10 @@
 
   <!-- ES Module 방식으로 FFmpeg WASM 로드 (버전 0.12.15) -->
   <script type="module">
-    // 먼저 모든 내보내기를 네임스페이스로 가져온 뒤, default export가 있다면 그쪽에서 함수를 추출합니다.
-    import * as FFmpegModule from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js';
-    const moduleExport = FFmpegModule.default || FFmpegModule;
-    const { createFFmpeg, fetchFile } = moduleExport;
-
+    // default export로 FFmpeg 모듈을 가져옵니다.
+    import FFmpeg from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js';
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    
     const ffmpeg = createFFmpeg({ log: true });
     const form = document.getElementById('convertForm');
     const progressDiv = document.getElementById('progress');
