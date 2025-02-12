@@ -43,8 +43,9 @@
 
   <!-- ES Module 방식으로 FFmpeg WASM 로드 (버전 0.12.15) -->
   <script type="module">
-    // @ffmpeg/ffmpeg 라이브러리를 ESM 형태로 가져옵니다.
-    import { createFFmpeg, fetchFile } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js';
+    // default import 후 구조 분해
+    import FFmpeg from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js';
+    const { createFFmpeg, fetchFile } = FFmpeg;
 
     const ffmpeg = createFFmpeg({ log: true });
     const form = document.getElementById('convertForm');
