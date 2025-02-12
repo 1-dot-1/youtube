@@ -2,7 +2,13 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <title>YouTube MP4 Converter (Client-side Experimental)</title>
+  <title>YouTube MP4 Converter (PyScript + FFmpeg WASM)</title>
+
+  <!-- PyScript (experimental) -->
+  <!-- 최신 버전: https://pyscript.net/ 에서 안내되는 CDN 사용 -->
+  <link rel="stylesheet" href="https://pyscript.net/latest/pyscript.css" />
+  <script defer src="https://pyscript.net/latest/pyscript.js"></script>
+
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -30,106 +36,182 @@
   </style>
 </head>
 <body>
-  <h1>YouTube MP4 Converter (Client-side Experimental)</h1>
+  <h1>YouTube MP4 Converter (PyScript + FFmpeg WASM)</h1>
   <p>
     ※ 경고: 이 코드는 YouTube의 서비스 약관 및 저작권 정책을 위반할 수 있으므로, 학습 및 실험 목적으로만 사용하십시오.
   </p>
-  <form id="convertForm">
+
+  <!-- 입력 폼 -->
+  <form id="convertForm" onsubmit="return false;">
     <label for="videoUrl">YouTube 영상 URL:</label><br>
-    <input type="text" id="videoUrl" name="videoUrl" placeholder="https://www.youtube.com/watch?v=..." required>
-    <button type="submit">변환 후 다운로드</button>
+    <input type="text" id="videoUrl" name="videoUrl" placeholder="https://www.youtube.com/watch?v=..." required style="width: 400px;">
+    <button type="button" id="convertBtn">변환 후 다운로드</button>
   </form>
+
+  <!-- 진행사항 표시 -->
   <div id="progress"></div>
 
-  <!-- ES Module 방식으로 FFmpeg WASM 로드 (버전 0.12.15) -->
+  <!-- 1) JS(ES Module)로 FFmpeg WASM 로드 -->
   <script type="module">
-    // default import 후 구조 분해
     import FFmpeg from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js';
     const { createFFmpeg, fetchFile } = FFmpeg;
 
-    const ffmpeg = createFFmpeg({ log: true });
-    const form = document.getElementById('convertForm');
-    const progressDiv = document.getElementById('progress');
-    // 공개 CORS 프록시 (출처: https://thingproxy.freeboard.io/fetch/)
-    const corsProxy = "https://thingproxy.freeboard.io/fetch/";
+    // ffmpeg 인스턴스(전역)
+    window._ffmpeg = createFFmpeg({ log: true });
+    window._ffmpegLoaded = false;
 
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      progressDiv.textContent = "프로세스 시작...\n";
+    // ffmpeg 초기화 함수 (최초 1회만 로드)
+    async function initFFmpeg() {
+      if (!window._ffmpegLoaded) {
+        const progressDiv = document.getElementById('progress');
+        progressDiv.textContent += "FFmpeg WASM 로딩 중...\n";
+        await window._ffmpeg.load();
+        window._ffmpegLoaded = true;
+        progressDiv.textContent += "FFmpeg WASM 로딩 완료.\n";
+      }
+    }
 
-      const videoUrl = document.getElementById('videoUrl').value.trim();
-      if (!videoUrl) {
-        progressDiv.textContent += "유효한 URL을 입력하세요.";
-        return;
-      }
-      
-      // ① YouTube URL에서 영상 ID 추출 (예: v=VIDEO_ID)
-      const videoIdMatch = videoUrl.match(/[?&]v=([^&]+)/);
-      if (!videoIdMatch) {
-        progressDiv.textContent += "유효한 YouTube URL이 아닙니다.";
-        return;
-      }
-      const videoId = videoIdMatch[1];
-      progressDiv.textContent += "비디오 ID 추출됨: " + videoId + "\n";
-      
-      // ② yt-download.org의 API(버튼 페이지)를 이용해 다운로드 링크 파싱 (실험적)
-      const apiUrl = "https://www.yt-download.org/api/button/mp4/" + videoId;
-      progressDiv.textContent += "다운로드 페이지 요청 중...\n";
-      
+    // PyScript → JS로 Uint8Array가 넘어오면, 이 함수에서 MP4 변환
+    window.convertToMp4 = async function (videoDataUint8) {
+      const progressDiv = document.getElementById('progress');
       try {
-        // CORS 프록시를 통해 HTML 페이지 가져오기
-        const apiResponse = await fetch(corsProxy + apiUrl);
-        const htmlText = await apiResponse.text();
-        // HTML 파서를 이용해 다운로드 링크 추출
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(htmlText, 'text/html');
-        // 다운로드 버튼의 링크 선택 (링크에 "download" 문자열 포함)
-        const linkElement = doc.querySelector('a[href*="download"]');
-        if (!linkElement) {
-          progressDiv.textContent += "다운로드 링크를 찾을 수 없습니다.\n";
-          return;
-        }
-        const downloadLink = linkElement.href;
-        progressDiv.textContent += "다운로드 링크 발견:\n" + downloadLink + "\n";
-        
-        // ③ CORS 프록시를 통해 영상 파일(바이너리) 다운로드
-        progressDiv.textContent += "비디오 파일 다운로드 중...\n";
-        const videoResponse = await fetch(corsProxy + downloadLink);
-        if (!videoResponse.ok) {
-          progressDiv.textContent += "비디오 파일 다운로드 실패: " + videoResponse.statusText + "\n";
-          return;
-        }
-        const videoData = await videoResponse.arrayBuffer();
-        progressDiv.textContent += "비디오 파일 다운로드 완료 (크기: " + videoData.byteLength + " 바이트)\n";
-        
-        // ④ ffmpeg.wasm을 이용한 mp4 컨테이너 변환 (스트림 복사; 이미 mp4인 경우에도 진행)
-        if (!ffmpeg.isLoaded()) {
-          progressDiv.textContent += "ffmpeg 로딩 중...\n";
-          await ffmpeg.load();
-        }
-        progressDiv.textContent += "ffmpeg 파일 시스템에 파일 쓰는 중...\n";
-        ffmpeg.FS('writeFile', 'input.mp4', new Uint8Array(videoData));
-        
-        progressDiv.textContent += "mp4 변환 시작 (스트림 복사)...\n";
-        await ffmpeg.run('-i', 'input.mp4', '-c', 'copy', 'output.mp4');
+        // ffmpeg 로드 확인
+        await initFFmpeg();
+
+        // 기존에 남아있을 수 있는 파일 정리
+        try { window._ffmpeg.FS('unlink', 'input.mp4'); } catch(e) {}
+        try { window._ffmpeg.FS('unlink', 'output.mp4'); } catch(e) {}
+
+        // 입력 파일 쓰기
+        progressDiv.textContent += "ffmpeg: 파일 쓰는 중...\n";
+        window._ffmpeg.FS('writeFile', 'input.mp4', videoDataUint8);
+
+        // 스트림 복사(이미 mp4라도 컨테이너 재패키징)
+        progressDiv.textContent += "mp4 변환(스트림 복사) 진행...\n";
+        await window._ffmpeg.run('-i', 'input.mp4', '-c', 'copy', 'output.mp4');
         progressDiv.textContent += "mp4 변환 완료.\n";
-        
-        // ⑤ 변환된 파일 읽고 Blob 생성 후 다운로드 링크 생성
-        const data = ffmpeg.FS('readFile', 'output.mp4');
+
+        // 변환된 파일 로드 후 다운로드 링크 생성
+        const data = window._ffmpeg.FS('readFile', 'output.mp4');
         const videoBlob = new Blob([data.buffer], { type: 'video/mp4' });
         const url = URL.createObjectURL(videoBlob);
+
         const a = document.createElement('a');
         a.href = url;
-        a.download = videoId + '.mp4';
+        // 그냥 video.mp4 로 저장하거나, 원하면 동적으로 이름 변경 가능
+        a.download = 'converted.mp4';
         a.className = "download-link";
-        a.textContent = "여기를 클릭하여 다운로드 (" + videoId + ".mp4)";
+        a.textContent = "여기를 클릭하여 다운로드 (converted.mp4)";
+
         progressDiv.appendChild(a);
-        
+
       } catch (err) {
-        progressDiv.textContent += "오류 발생: " + err.message + "\n";
+        progressDiv.textContent += "ffmpeg 변환 중 오류 발생: " + err.message + "\n";
       }
-    });
+    };
   </script>
-  <p style="color: #666; font-size: 0.9em;">* 이 파일은 반드시 로컬 서버(예: <code>python -m http.server</code>)를 통해 실행해야 합니다.</p>
+
+  <!-- 2) PyScript 파트: HTML 안에 파이썬 코드 삽입 -->
+  <!--   - yt-download.org에서 다운로드 링크 파싱
+        - 영상 바이너리 다운로드
+        - JS 함수(window.convertToMp4)에 Uint8Array로 전달
+  -->
+  <py-script>
+from pyodide import to_js
+from pyodide.http import pyfetch
+import js
+import re
+
+# CORS 프록시 (필요시 변경; 또는 직접 CORS 허용 서버 운영)
+cors_proxy = "https://thingproxy.freeboard.io/fetch/"
+
+async def fetch_html(url: str) -> str:
+    """
+    주어진 URL에 대해 GET 요청을 수행하고, text(HTML)을 반환.
+    pyfetch 사용.
+    """
+    response = await pyfetch(url)
+    if response.ok:
+        text = await response.text()
+        return text
+    else:
+        raise RuntimeError(f"HTTP Error: {response.status} {response.status_text}")
+
+async def fetch_binary(url: str) -> bytes:
+    """
+    주어진 URL에 대해 GET 요청을 수행하고, 바이너리를 반환.
+    """
+    response = await pyfetch(url)
+    if response.ok:
+        data = await response.bytes()
+        return data
+    else:
+        raise RuntimeError(f"HTTP Error: {response.status} {response.status_text}")
+
+async def pyConvert():
+    progressDiv = js.document.getElementById("progress")
+    progressDiv.textContent = "프로세스 시작...\n"
+
+    videoUrl = js.document.getElementById("videoUrl").value.strip()
+    if not videoUrl:
+        progressDiv.textContent += "유효한 URL을 입력하세요.\n"
+        return
+
+    # 1) YouTube URL에서 v= 추출
+    match = re.search(r"[?&]v=([^&]+)", videoUrl)
+    if not match:
+        progressDiv.textContent += "유효한 YouTube URL이 아닙니다.\n"
+        return
+    videoId = match.group(1)
+    progressDiv.textContent += f"비디오 ID 추출됨: {videoId}\n"
+
+    # 2) yt-download.org의 API 페이지 HTML 가져오기
+    apiUrl = f"https://www.yt-download.org/api/button/mp4/{videoId}"
+    progressDiv.textContent += f"다운로드 페이지 요청 중...\n{apiUrl}\n"
+
+    try:
+        htmlText = await fetch_html(cors_proxy + apiUrl)
+    except Exception as e:
+        progressDiv.textContent += f"페이지 요청 오류: {str(e)}\n"
+        return
+
+    # 3) HTML에서 다운로드 링크 추출
+    #    간단히 href에 'download' 문자열이 들어간 <a> 태그를 찾음
+    #    정규표현식 또는 간단히 split, or idx 탐색도 가능
+    match_dl = re.search(r'href="([^"]*download[^"]*)"', htmlText)
+    if not match_dl:
+        progressDiv.textContent += "다운로드 링크를 찾을 수 없습니다.\n"
+        return
+
+    downloadLink = match_dl.group(1)
+    progressDiv.textContent += f"다운로드 링크 발견:\n{downloadLink}\n"
+
+    # 4) 영상 바이너리 다운로드
+    progressDiv.textContent += "비디오 파일 다운로드 중...\n"
+    try:
+        videoData = await fetch_binary(cors_proxy + downloadLink)
+        size = len(videoData)
+        progressDiv.textContent += f"비디오 파일 다운로드 완료 (크기: {size} 바이트)\n"
+    except Exception as e:
+        progressDiv.textContent += f"비디오 다운로드 오류: {str(e)}\n"
+        return
+
+    # 5) JS의 convertToMp4 함수에 Uint8Array로 전달
+    #    (PyScript에서 bytes → JS Uint8Array 변환)
+    array = js.Uint8Array.new(to_js(videoData))
+    progressDiv.textContent += "JS로 변환 요청...\n"
+    js.convertToMp4(array)
+    # 이후 진행은 JS 쪽에서 처리 (ffmpeg.wasm)
+
+# PyScript 영역에서 함수/이벤트 연결
+# 자바스크립트로 document.getElementById("convertBtn").onclick = pyConvert도 가능하지만,
+# 아래와 같이 Python 측에서 addEventListener를 달 수도 있음.
+js.document.getElementById("convertBtn").addEventListener("click", pyConvert)
+  </py-script>
+
+  <p style="color: #666; font-size: 0.9em; margin-top:40px;">
+    * 이 파일은 <strong>로컬 파일이 아닌</strong> <code>http://</code> 환경에서 열어야 합니다.  
+    <br>예: <code>python -m http.server</code> 후 <code>http://localhost:8000/index.html</code> 접속
+  </p>
 </body>
 </html>
